@@ -1,6 +1,7 @@
 import com.flagstone.transform.*;
 import com.flagstone.transform.image.DefineImage2;
 import javafx.util.Pair;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.json.JSONObject;
 import org.json.XML;
@@ -25,28 +26,21 @@ import java.util.zip.DataFormatException;
 import java.util.zip.InflaterInputStream;
 
 public class HabboDecompile {
-    public static String productionUrl;
+    public static String productionUrl = "https://images.habbo.com/gordon/PRODUCTION-202108161205-760388604/";
 
     public static void main(String[] args) throws IOException {
-        productionUrl = getLatestProductionUrl();
+        try {
+            productionUrl = getLatestProductionUrl();
+        } catch (IOException e) {}
 
         JSONObject figureMap = getFigureMap();
         List<String> figureNames = getFigureNames(figureMap);
 
         System.out.println(figureNames.size());
 
-        for (int i = 0; i < 10; i ++) {
-            extractImagesFromSwf(figureNames.get(i));
+        for (int i = 0; i < 4; i ++) {
+            extractFigureImagesFromSwf(figureNames.get(i));
         }
-    }
-
-    public static List<String> getFigureNames(JSONObject figureMap) {
-        return figureMap.getJSONObject("map")
-                        .getJSONArray("lib")
-                        .toList().stream()
-                        .map(o -> (HashMap<String, Object>) o)
-                        .map(m -> (String) m.get("id"))
-                        .collect(Collectors.toList());
     }
 
     public static String getLatestProductionUrl() throws IOException {
@@ -63,7 +57,16 @@ public class HabboDecompile {
         return XML.toJSONObject(IOUtils.toString(new URL(productionUrl + "figuremapv2.xml").openStream(), StandardCharsets.UTF_8));
     }
 
-    public static void extractImagesFromSwf(String swfName) {
+    public static List<String> getFigureNames(JSONObject figureMap) {
+        return figureMap.getJSONObject("map")
+                .getJSONArray("lib")
+                .toList().stream()
+                .map(o -> (HashMap<String, Object>) o)
+                .map(m -> (String) m.get("id"))
+                .collect(Collectors.toList());
+    }
+
+    public static void extractFigureImagesFromSwf(String swfName) {
         Movie m = new Movie();
         try {
             m.decodeFromUrl(new URL(productionUrl + swfName + ".swf"));
@@ -83,21 +86,22 @@ public class HabboDecompile {
                 if(mt instanceof DefineData) {
                     DefineData defineData = (DefineData) mt;
                     JSONObject xml = XML.toJSONObject(new String(defineData.getData()));
-                    System.out.println(xml.toString(2));
-                    xml.getJSONObject("manifest")
-                            .getJSONObject("library")
-                            .getJSONObject("assets")
-                            .getJSONArray("asset")
-                            .toList().stream()
-                            .map(o -> (HashMap<String, Object>) o)
-                            .forEach(asset -> {
-                                String coords = (String) ((HashMap<String, Object>) asset.get("param")).get("value");
-                                int x = Integer.parseInt(coords.split(",")[0]);
-                                int y = Integer.parseInt(coords.split(",")[1]);
-                                String name = (String) asset.get("name");
-                                order.add(name);
-                                positions.put(name, new Pair<>(x, y));
-                            });
+                    if(xml.has("manifest")) {
+                        xml.getJSONObject("manifest")
+                                .getJSONObject("library")
+                                .getJSONObject("assets")
+                                .getJSONArray("asset")
+                                .toList().stream()
+                                .map(o -> (HashMap<String, Object>) o)
+                                .forEach(asset -> {
+                                    String coords = (String) ((HashMap<String, Object>) asset.get("param")).get("value");
+                                    int x = Integer.parseInt(coords.split(",")[0]);
+                                    int y = Integer.parseInt(coords.split(",")[1]);
+                                    String name = (String) asset.get("name");
+                                    order.add(name);
+                                    positions.put(name, new Pair<>(x, y));
+                                });
+                    }
                 }
 
                 if(mt instanceof DefineImage2) {
@@ -133,9 +137,6 @@ public class HabboDecompile {
                             int g = bytes[byteIndex + 2] & 0xFF;
                             int b = bytes[byteIndex + 3] & 0xFF;
                             graphics.setColor(new Color(r, g, b, a));
-                            System.out.println(bytes[byteIndex]);
-                            System.out.println(bytes[byteIndex] & 0xFF);
-                            System.out.println(((float) (bytes[byteIndex] & 0xFF))/255);
                             graphics.drawRect(i, j, 0, 0);
                         }
                     }
@@ -143,8 +144,8 @@ public class HabboDecompile {
                 }
             }
 
-            if(!Files.isDirectory(Paths.get(swfName))) {
-                Files.createDirectory(Paths.get(swfName));
+            if(!Files.isDirectory(Paths.get("figure/" + swfName))) {
+                Files.createDirectories(Paths.get("figure/" + swfName));
             }
 
             int xMin = 500;
@@ -155,7 +156,7 @@ public class HabboDecompile {
             for(String name : order) {
                 BufferedImage image = images.get(imgIds.get(name));
                 if(image != null) {
-                    if (name.contains("std") && name.contains("2_0")) {
+                    if (name.startsWith("h_std") && name.contains("2_0")) {
                         int x = -positions.get(name).getKey();
                         int y = -positions.get(name).getValue();
                         if(x < xMin) xMin = x;
@@ -166,24 +167,24 @@ public class HabboDecompile {
                 }
             }
 
-            BufferedImage img = new BufferedImage(xMax-xMin, yMax - yMin, Color.TRANSLUCENT);
-            Graphics2D graphics = img.createGraphics();
-            graphics.translate(-xMin, -yMin);
+            if(xMax-xMin > 0 && yMax-yMin > 0) {
+                BufferedImage img = new BufferedImage(xMax - xMin, yMax - yMin, Color.TRANSLUCENT);
 
-            for(String name : order) {
-                BufferedImage image = images.get(imgIds.get(name));
-                if(image != null) {
-                    if (name.contains("std") && name.contains("2_0")) {
-                        System.out.println(name);
-                        graphics.drawImage(image, -positions.get(name).getKey(), -positions.get(name).getValue(), image.getWidth(), image.getHeight(), null);
+                Graphics2D graphics = img.createGraphics();
+                graphics.translate(-xMin, -yMin);
+
+                for (String name : order) {
+                    BufferedImage image = images.get(imgIds.get(name));
+                    if (image != null) {
+                        if (name.startsWith("h_std") && name.contains("2_0")) {
+                            graphics.drawImage(image, -positions.get(name).getKey(), -positions.get(name).getValue(), image.getWidth(), image.getHeight(), null);
+                        }
+                        ImageIO.write(image, "png", new File("figure/" + swfName + "/" + name + ".png"));
                     }
-                    ImageIO.write(image, "png", new File(swfName + "/" + name + ".png"));
                 }
+
+                ImageIO.write(img, "png", new File("figure/" + swfName + "/" + swfName + ".png"));
             }
-
-
-            ImageIO.write(img, "png", new File(swfName + "/" + swfName + ".png"));
-
         } catch (DataFormatException | IOException e) {
             e.printStackTrace();
         }
